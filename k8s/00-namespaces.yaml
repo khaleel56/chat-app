@@ -1,0 +1,16 @@
+---
+# Create namespaces for each environment
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chat-dev
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chat-pre-prod
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chat-prod

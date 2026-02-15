@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat-app-deployment
+  namespace: chat-prod
+  labels:
+    app: chat-app
+    env: prod
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: chat-app
+      env: prod
+  template:
+    metadata:
+      labels:
+        app: chat-app
+        env: prod
+    spec:
+      containers:
+      - name: chat-app
+        image: chat-app:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3000
+        env:
+        - name: PORT
+          value: "3000"
+        - name: FEAT_TYPING
+          value: "false"
+        - name: FEAT_MSG_TS
+          value: "true"
+        - name: FEAT_EMOJI
+          value: "false"

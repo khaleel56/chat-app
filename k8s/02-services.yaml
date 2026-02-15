@@ -1,0 +1,60 @@
+---
+# DEV Service (NodePort)
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-app-service
+  namespace: chat-dev
+  labels:
+    app: chat-app
+    env: dev
+spec:
+  type: NodePort
+  selector:
+    app: chat-app
+    env: dev
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000
+    nodePort: 30080
+
+---
+# PRE-PROD Service (ClusterIP behind Ingress)
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-app-service
+  namespace: chat-pre-prod
+  labels:
+    app: chat-app
+    env: pre-prod
+spec:
+  type: ClusterIP
+  selector:
+    app: chat-app
+    env: pre-prod
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000
+
+---
+# PROD Service (ClusterIP behind Ingress)
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-app-service
+  namespace: chat-prod
+  labels:
+    app: chat-app
+    env: prod
+spec:
+  type: ClusterIP
+  selector:
+    app: chat-app
+    env: prod
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000

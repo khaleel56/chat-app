@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebSocket Chat Application</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 10px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+      display: flex;
+      height: 600px;
+      overflow: hidden;
+    }
+
+    .sidebar {
+      width: 250px;
+      background: #f8f9fa;
+      border-right: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+    }
+
+    .sidebar h3 {
+      margin-bottom: 15px;
+      color: #333;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+
+    .user-list {
+      list-style: none;
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .user-item {
+      padding: 10px;
+      margin-bottom: 5px;
+      background: white;
+      border-radius: 5px;
+      font-size: 14px;
+      color: #555;
+      display: flex;
+      align-items: center;
+    }
+
+    .user-item::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: #4CAF50;
+      border-radius: 50%;
+      margin-right: 10px;
+    }
+
+    .main-chat {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+    }
+
+    .chat-header {
+      text-align: center;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #667eea;
+      padding-bottom: 10px;
+    }
+
+    .chat-header h1 {
+      color: #333;
+      font-size: 24px;
+    }
+
+    .messages-container {
+      flex: 1;
+      overflow-y: auto;
+      margin-bottom: 20px;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      padding: 15px;
+    }
+
+    .message {
+      margin-bottom: 15px;
+      padding: 10px 12px;
+      border-radius: 5px;
+      max-width: 70%;
+      word-wrap: break-word;
+    }
+
+    .message.own {
+      background: #667eea;
+      color: white;
+      margin-left: auto;
+      text-align: right;
+    }
+
+    .message.other {
+      background: #f0f0f0;
+      color: #333;
+    }
+
+    .message-username {
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 5px;
+      opacity: 0.8;
+    }
+
+    .message-text {
+      font-size: 14px;
+    }
+
+    .message-time {
+      font-size: 11px;
+      margin-top: 5px;
+      opacity: 0.7;
+    }
+
+    .system-message {
+      text-align: center;
+      color: #999;
+      font-size: 12px;
+      margin: 10px 0;
+      font-style: italic;
+    }
+
+    .typing-indicator {
+      color: #999;
+      font-size: 12px;
+      font-style: italic;
+      margin: 10px 0;
+    }
+
+    .input-area {
+      display: flex;
+      gap: 10px;
+    }
+
+    .username-input {
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: 14px;
+      flex: 0.3;
+    }
+
+    .message-input {
+      flex: 1;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: 14px;
+      resize: none;
+    }
+
+    .send-btn {
+      padding: 12px 20px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: bold;
+      transition: background 0.3s;
+    }
+
+    .send-btn:hover {
+      background: #764ba2;
+    }
+
+    .send-btn:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .status {
+      text-align: center;
+      color: #4CAF50;
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+
+    .status.disconnected {
+      color: #f44336;
+    }
+
+    @media (max-width: 768px) {
+      .container {
+        flex-direction: column;
+        height: auto;
+      }
+
+      .sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid #ddd;
+        max-height: 150px;
+      }
+
+      .message {
+        max-width: 90%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <h3>Connected Users</h3>
+      <ul class="user-list" id="userList"></ul>
+    </div>
+
+    <!-- Main Chat Area -->
+    <div class="main-chat">
+      <div class="chat-header">
+        <h1>WebSocket Chat</h1>
+        <div class="status" id="status">Connecting...</div>
+      </div>
+
+      <div class="messages-container" id="messagesContainer"></div>
+
+      <div class="typing-indicator" id="typingIndicator" style="display: none;"></div>
+
+      <div class="input-area">
+        <input 
+          type="text" 
+          class="username-input" 
+          id="usernameInput" 
+          placeholder="Your name" 
+          disabled
+        >
+        <textarea 
+          class="message-input" 
+          id="messageInput" 
+          placeholder="Type a message..." 
+          rows="2"
+          disabled
+        ></textarea>
+        <button class="send-btn" id="sendBtn" disabled>Send</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script src="chat.js"></script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+---
+# DEV Ingress (optional, path-based routing)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chat-app-ingress
+  namespace: chat-dev
+  labels:
+    app: chat-app
+    env: dev
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: chat-dev.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: chat-app-service
+            port:
+              number: 80
+
+---
+# PRE-PROD Ingress (subdomain-based routing)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chat-app-ingress
+  namespace: chat-pre-prod
+  labels:
+    app: chat-app
+    env: pre-prod
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: chat-pre-prod.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: chat-app-service
+            port:
+              number: 80
+
+---
+# PROD Ingress (subdomain-based routing)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chat-app-ingress
+  namespace: chat-prod
+  labels:
+    app: chat-app
+    env: prod
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: chat-prod.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: chat-app-service
+            port:
+              number: 80

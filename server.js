@@ -18,68 +18,89 @@ const featureFlags = require('./config/featureFlags');
 // Middleware
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Store connected users
+// Store connected users with their room
 const users = {};
+
+function getUsersInRoom(roomName) {
+  return Object.values(users)
+    .filter((user) => user.room === roomName)
+    .map((user) => user.username);
+}
 
 // Socket.io events
 io.on('connection', (socket) => {
   console.log('New user connected:', socket.id);
 
-  // Handle user joining
-  socket.on('user-join', (username) => {
-    users[socket.id] = username;
-    console.log(`${username} joined the chat`);
-    
-    // Notify all clients about new user
-    io.emit('user-joined', {
-      username: username,
+  socket.on('user-join', (payload) => {
+    const username = String(payload?.username || '').trim();
+    const room = String(payload?.room || 'general').trim() || 'general';
+
+    if (!username) return;
+
+    const previousUser = users[socket.id];
+    if (previousUser && previousUser.room && previousUser.room !== room) {
+      socket.leave(previousUser.room);
+    }
+
+    users[socket.id] = { username, room };
+    socket.join(room);
+
+    console.log(`${username} joined room "${room}"`);
+
+    socket.emit('joined-room', { username, room });
+
+    io.to(room).emit('user-joined', {
+      username,
       message: `${username} joined the chat`,
-      userId: socket.id
+      userId: socket.id,
+      room
     });
 
-    // Send updated user list
-    io.emit('user-list', Object.values(users));
+    io.to(room).emit('user-list', getUsersInRoom(room));
   });
 
-  // Handle incoming messages
   socket.on('send-message', (data) => {
-    const sender = users[socket.id];
-    console.log(`Message from ${sender}:`, data.message);
+    const user = users[socket.id];
+    const message = String(data?.message || '').trim();
 
-    // Broadcast message to all clients
-    io.emit('receive-message', {
-      username: sender,
-      message: data.message,
+    if (!user || !message) return;
+
+    console.log(`Message from ${user.username} in ${user.room}:`, message);
+
+    io.to(user.room).emit('receive-message', {
+      username: user.username,
+      message,
       timestamp: new Date().toLocaleTimeString(),
-      userId: socket.id
+      userId: socket.id,
+      room: user.room
     });
   });
 
-  // Handle user disconnect
   socket.on('disconnect', () => {
-    const username = users[socket.id];
-    delete users[socket.id];
-    console.log(`${username} left the chat`);
+    const user = users[socket.id];
+    if (!user) return;
 
-    // Notify all clients
-    io.emit('user-left', {
-      username: username,
-      message: `${username} left the chat`
+    delete users[socket.id];
+    console.log(`${user.username} left room "${user.room}"`);
+
+    io.to(user.room).emit('user-left', {
+      username: user.username,
+      message: `${user.username} left the chat`
     });
 
-    // Send updated user list
-    io.emit('user-list', Object.values(users));
+    io.to(user.room).emit('user-list', getUsersInRoom(user.room));
   });
 
-  // Handle typing indicator
   socket.on('typing', (data) => {
-    socket.broadcast.emit('user-typing', {
-      username: users[socket.id],
-      isTyping: data.isTyping
+    const user = users[socket.id];
+    if (!user) return;
+
+    socket.to(user.room).emit('user-typing', {
+      username: user.username,
+      isTyping: Boolean(data?.isTyping)
     });
   });
 });
-
 
 // Routes
 app.get('/', (req, res) => {

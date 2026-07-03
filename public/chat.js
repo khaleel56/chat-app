@@ -1,6 +1,3 @@
-// Feature flags fetched from server will control client-side behaviors
-let featureFlags = {};
-
 // Simple shortcode -> unicode emoji map (extend as needed)
 const EMOJI_MAP = {
   ':smile:': '😄',
@@ -17,24 +14,27 @@ function convertEmojiShortcodes(text) {
 
 // DOM elements
 const usernameInput = document.getElementById('usernameInput');
+const roomInput = document.getElementById('roomInput');
 const messageInput = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
 const messagesContainer = document.getElementById('messagesContainer');
 const userList = document.getElementById('userList');
 const status = document.getElementById('status');
 const typingIndicator = document.getElementById('typingIndicator');
+const roomLabel = document.getElementById('roomLabel');
 
 let username = '';
+let currentRoom = 'general';
 let typingTimeout;
 
 function init() {
   const socket = io(window.location.origin);
 
-  // Connection events
   socket.on('connect', () => {
     status.textContent = 'Connected ✓';
     status.classList.remove('disconnected');
     usernameInput.disabled = false;
+    roomInput.disabled = false;
   });
 
   socket.on('disconnect', () => {
@@ -44,8 +44,13 @@ function init() {
     sendBtn.disabled = true;
   });
 
-  // Join chat
   usernameInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter' && usernameInput.value.trim()) {
+      joinChat();
+    }
+  });
+
+  roomInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter' && usernameInput.value.trim()) {
       joinChat();
     }
@@ -53,16 +58,22 @@ function init() {
 
   function joinChat() {
     username = usernameInput.value.trim();
+    currentRoom = roomInput.value.trim() || 'general';
+
     if (username) {
-      socket.emit('user-join', username);
+      socket.emit('user-join', {
+        username,
+        room: currentRoom
+      });
+
       usernameInput.disabled = true;
+      roomInput.disabled = true;
       messageInput.disabled = false;
       sendBtn.disabled = false;
       messageInput.focus();
     }
   }
 
-  // Send message
   sendBtn.addEventListener('click', sendMessage);
   messageInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -74,31 +85,32 @@ function init() {
   function sendMessage() {
     const message = messageInput.value.trim();
     if (message) {
-      socket.emit('send-message', { message });
+      socket.emit('send-message', { message, room: currentRoom });
       messageInput.value = '';
       messageInput.focus();
       if (featureFlags.typingIndicator) socket.emit('typing', { isTyping: false });
     }
   }
 
-  // Typing indicator (only if enabled)
-  if (featureFlags.typingIndicator) {
-    messageInput.addEventListener('input', () => {
-      socket.emit('typing', { isTyping: true });
-      clearTimeout(typingTimeout);
-      typingTimeout = setTimeout(() => {
-        socket.emit('typing', { isTyping: false });
-      }, 1000);
-    });
-  }
+  messageInput.addEventListener('input', () => {
+    socket.emit('typing', { isTyping: true });
+    clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+      socket.emit('typing', { isTyping: false });
+    }, 1000);
+  });
 
-  // Receive message
+  socket.on('joined-room', (data) => {
+    currentRoom = data.room;
+    roomLabel.textContent = `Room: ${data.room}`;
+  });
+
   socket.on('receive-message', (data) => {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${data.userId === socket.id ? 'own' : 'other'}`;
-    const timeHtml = featureFlags.messageTimestamps ? `<div class="message-time">${data.timestamp}</div>` : '';
+    const timeHtml = `<div class="message-time">${data.timestamp}</div>`;
     const raw = escapeHtml(data.message);
-    const withEmoji = featureFlags.emojiSupport ? convertEmojiShortcodes(raw) : raw;
+    const withEmoji = convertEmojiShortcodes(raw);
     messageDiv.innerHTML = `
       <div class="message-username">${data.username}</div>
       <div class="message-text">${withEmoji}</div>
@@ -108,22 +120,19 @@ function init() {
     scrollToBottom();
   });
 
-  // User joined
   socket.on('user-joined', (data) => {
     addSystemMessage(data.message);
     scrollToBottom();
   });
 
-  // User left
   socket.on('user-left', (data) => {
     addSystemMessage(data.message);
     scrollToBottom();
   });
 
-  // Update user list
   socket.on('user-list', (users) => {
     userList.innerHTML = '';
-    users.forEach(user => {
+    users.forEach((user) => {
       const li = document.createElement('li');
       li.className = 'user-item';
       li.textContent = user;
@@ -131,21 +140,15 @@ function init() {
     });
   });
 
-  // Typing indicator
-  if (featureFlags.typingIndicator) {
-    socket.on('user-typing', (data) => {
-      if (data.isTyping) {
-        typingIndicator.textContent = `${data.username} is typing...`;
-        typingIndicator.style.display = 'block';
-      } else {
-        typingIndicator.style.display = 'none';
-      }
-    });
-  } else {
-    typingIndicator.style.display = 'none';
-  }
+  socket.on('user-typing', (data) => {
+    if (data.isTyping) {
+      typingIndicator.textContent = `${data.username} is typing...`;
+      typingIndicator.style.display = 'block';
+    } else {
+      typingIndicator.style.display = 'none';
+    }
+  });
 
-  // Utility functions
   function addSystemMessage(message) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'system-message';
@@ -165,19 +168,8 @@ function init() {
       '"': '&quot;',
       "'": '&#039;'
     };
-    return text.replace(/[&<>\"']/g, m => map[m]);
+    return text.replace(/[&<>\"']/g, (m) => map[m]);
   }
 }
 
-// Fetch flags from server then initialize client
-fetch('/flags')
-  .then(res => res.json())
-  .then(flags => {
-    featureFlags = flags || {};
-    init();
-  })
-  .catch(() => {
-    // On error, use defaults and still init
-    featureFlags = { typingIndicator: true, messageTimestamps: true, emojiSupport: false };
-    init();
-  });
+init();

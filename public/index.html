@@ -93,6 +93,17 @@
       font-size: 24px;
     }
 
+    .room-badge {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 10px;
+      background: #eef2ff;
+      color: #4c51bf;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
     .messages-container {
       flex: 1;
       overflow-y: auto;
@@ -158,14 +169,25 @@
     .input-area {
       display: flex;
       gap: 10px;
+      flex-wrap: wrap;
     }
 
-    .username-input {
+    .username-input,
+    .room-input {
       padding: 12px;
       border: 1px solid #ddd;
       border-radius: 5px;
       font-size: 14px;
-      flex: 0.3;
+    }
+
+    .username-input {
+      flex: 0.35;
+      min-width: 140px;
+    }
+
+    .room-input {
+      flex: 0.2;
+      min-width: 100px;
     }
 
     .message-input {
@@ -175,6 +197,7 @@
       border-radius: 5px;
       font-size: 14px;
       resize: none;
+      min-width: 220px;
     }
 
     .send-btn {
@@ -230,17 +253,16 @@
 </head>
 <body>
   <div class="container">
-    <!-- Sidebar -->
     <div class="sidebar">
       <h3>Connected Users</h3>
       <ul class="user-list" id="userList"></ul>
     </div>
 
-    <!-- Main Chat Area -->
     <div class="main-chat">
       <div class="chat-header">
         <h1>WebSocket Chat</h1>
         <div class="status" id="status">Connecting...</div>
+        <div class="room-badge" id="roomLabel">Room: general</div>
       </div>
 
       <div class="messages-container" id="messagesContainer"></div>
@@ -248,17 +270,25 @@
       <div class="typing-indicator" id="typingIndicator" style="display: none;"></div>
 
       <div class="input-area">
-        <input 
-          type="text" 
-          class="username-input" 
-          id="usernameInput" 
-          placeholder="Your name" 
+        <input
+          type="text"
+          class="username-input"
+          id="usernameInput"
+          placeholder="Your name"
           disabled
         >
-        <textarea 
-          class="message-input" 
-          id="messageInput" 
-          placeholder="Type a message..." 
+        <input
+          type="text"
+          class="room-input"
+          id="roomInput"
+          placeholder="Room"
+          value="general"
+          disabled
+        >
+        <textarea
+          class="message-input"
+          id="messageInput"
+          placeholder="Type a message..."
           rows="2"
           disabled
         ></textarea>

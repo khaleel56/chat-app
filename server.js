@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
@@ -12,19 +13,24 @@ const io = socketIo(server, {
   }
 });
 
-// Feature flags
-const featureFlags = require('./config/featureFlags');
-
 // Middleware
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Store connected users with their room
 const users = {};
+const uploadsDir = path.join(__dirname, 'public', 'uploads');
+fs.mkdirSync(uploadsDir, { recursive: true });
 
 function getUsersInRoom(roomName) {
   return Object.values(users)
     .filter((user) => user.room === roomName)
     .map((user) => user.username);
+}
+
+function sanitizeFileName(fileName) {
+  return String(fileName || 'file')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(0, 80);
 }
 
 // Socket.io events
@@ -100,16 +106,36 @@ io.on('connection', (socket) => {
       isTyping: Boolean(data?.isTyping)
     });
   });
+
+  socket.on('send-file', (data) => {
+    const user = users[socket.id];
+    const fileName = String(data?.fileName || 'file').trim();
+    const fileData = String(data?.fileData || '');
+    const fileType = String(data?.fileType || 'application/octet-stream');
+
+    if (!user || !fileName || !fileData) return;
+
+    const safeFileName = `${Date.now()}-${sanitizeFileName(fileName)}`;
+    const filePath = path.join(uploadsDir, safeFileName);
+    const buffer = Buffer.from(fileData, 'base64');
+
+    fs.writeFileSync(filePath, buffer);
+
+    io.to(user.room).emit('receive-file', {
+      username: user.username,
+      fileName,
+      fileUrl: `/uploads/${safeFileName}`,
+      fileType,
+      timestamp: new Date().toLocaleTimeString(),
+      userId: socket.id,
+      room: user.room
+    });
+  });
 });
 
 // Routes
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Expose flags to the client
-app.get('/flags', (req, res) => {
-  res.json(featureFlags.getAll());
 });
 
 // Start server

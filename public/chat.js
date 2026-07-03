@@ -17,6 +17,8 @@ const usernameInput = document.getElementById('usernameInput');
 const roomInput = document.getElementById('roomInput');
 const messageInput = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
+const fileInput = document.getElementById('fileInput');
+const attachBtn = document.getElementById('attachBtn');
 const messagesContainer = document.getElementById('messagesContainer');
 const userList = document.getElementById('userList');
 const status = document.getElementById('status');
@@ -42,6 +44,8 @@ function init() {
     status.classList.add('disconnected');
     messageInput.disabled = true;
     sendBtn.disabled = true;
+    attachBtn.disabled = true;
+    fileInput.disabled = true;
   });
 
   usernameInput.addEventListener('keypress', (e) => {
@@ -70,11 +74,22 @@ function init() {
       roomInput.disabled = true;
       messageInput.disabled = false;
       sendBtn.disabled = false;
+      attachBtn.disabled = false;
+      fileInput.disabled = false;
       messageInput.focus();
     }
   }
 
   sendBtn.addEventListener('click', sendMessage);
+  attachBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      sendFile(file);
+    }
+    event.target.value = '';
+  });
+
   messageInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -120,6 +135,25 @@ function init() {
     scrollToBottom();
   });
 
+  socket.on('receive-file', (data) => {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${data.userId === socket.id ? 'own' : 'other'} file-message`;
+    const timeHtml = `<div class="message-time">${data.timestamp}</div>`;
+    const fileName = escapeHtml(data.fileName);
+    const fileLink = `<a href="${data.fileUrl}" target="_blank" rel="noopener noreferrer">📎 ${fileName}</a>`;
+    const previewHtml = data.fileType && data.fileType.startsWith('image/')
+      ? `<div class="message-text"><a href="${data.fileUrl}" target="_blank" rel="noopener noreferrer"><img class="file-preview" src="${data.fileUrl}" alt="${fileName}"></a></div>`
+      : `<div class="message-text">${fileLink}</div>`;
+
+    messageDiv.innerHTML = `
+      <div class="message-username">${data.username}</div>
+      ${previewHtml}
+      ${timeHtml}
+    `;
+    messagesContainer.appendChild(messageDiv);
+    scrollToBottom();
+  });
+
   socket.on('user-joined', (data) => {
     addSystemMessage(data.message);
     scrollToBottom();
@@ -148,6 +182,23 @@ function init() {
       typingIndicator.style.display = 'none';
     }
   });
+
+  function sendFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      const base64 = typeof result === 'string' ? result.split(',')[1] : '';
+
+      if (!base64) return;
+
+      socket.emit('send-file', {
+        fileName: file.name,
+        fileType: file.type,
+        fileData: base64
+      });
+    };
+    reader.readAsDataURL(file);
+  }
 
   function addSystemMessage(message) {
     const messageDiv = document.createElement('div');

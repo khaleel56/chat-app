@@ -3,6 +3,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
 const fs = require('fs');
+const multer = require('multer');
 
 const app = express();
 const server = http.createServer(app);
@@ -20,6 +21,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 const users = {};
 const uploadsDir = path.join(__dirname, 'public', 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: uploadsDir,
+  filename: (req, file, cb) => {
+    const safeName = sanitizeFileName(file.originalname);
+    cb(null, `${Date.now()}-${safeName}`);
+  }
+});
+
+const upload = multer({ storage });
 
 function getUsersInRoom(roomName) {
   return Object.values(users)
@@ -110,21 +121,15 @@ io.on('connection', (socket) => {
   socket.on('send-file', (data) => {
     const user = users[socket.id];
     const fileName = String(data?.fileName || 'file').trim();
-    const fileData = String(data?.fileData || '');
+    const fileUrl = String(data?.fileUrl || '').trim();
     const fileType = String(data?.fileType || 'application/octet-stream');
 
-    if (!user || !fileName || !fileData) return;
-
-    const safeFileName = `${Date.now()}-${sanitizeFileName(fileName)}`;
-    const filePath = path.join(uploadsDir, safeFileName);
-    const buffer = Buffer.from(fileData, 'base64');
-
-    fs.writeFileSync(filePath, buffer);
+    if (!user || !fileName || !fileUrl) return;
 
     io.to(user.room).emit('receive-file', {
       username: user.username,
       fileName,
-      fileUrl: `/uploads/${safeFileName}`,
+      fileUrl,
       fileType,
       timestamp: new Date().toLocaleTimeString(),
       userId: socket.id,
@@ -136,6 +141,18 @@ io.on('connection', (socket) => {
 // Routes
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.post('/upload', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  res.json({
+    fileName: req.file.originalname,
+    fileUrl: `/uploads/${req.file.filename}`,
+    fileType: req.file.mimetype
+  });
 });
 
 // Start server

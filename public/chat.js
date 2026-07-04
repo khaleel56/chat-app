@@ -184,20 +184,26 @@ function init() {
   });
 
   function sendFile(file) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      const base64 = typeof result === 'string' ? result.split(',')[1] : '';
+    const formData = new FormData();
+    formData.append('file', file);
 
-      if (!base64) return;
+    fetch('/upload', {
+      method: 'POST',
+      body: formData
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (!data.fileUrl) return;
 
-      socket.emit('send-file', {
-        fileName: file.name,
-        fileType: file.type,
-        fileData: base64
+        socket.emit('send-file', {
+          fileName: data.fileName,
+          fileType: data.fileType || file.type,
+          fileUrl: data.fileUrl
+        });
+      })
+      .catch((error) => {
+        console.error('Upload failed:', error);
       });
-    };
-    reader.readAsDataURL(file);
   }
 
   function addSystemMessage(message) {

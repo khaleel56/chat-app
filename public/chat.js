@@ -23,7 +23,16 @@ const messagesContainer = document.getElementById('messagesContainer');
 const userList = document.getElementById('userList');
 const status = document.getElementById('status');
 const typingIndicator = document.getElementById('typingIndicator');
+const uploadStatus = document.getElementById('uploadStatus');
 const roomLabel = document.getElementById('roomLabel');
+
+const featureFlags = {
+  typingIndicator: true
+};
+
+const CHUNK_UPLOAD_THRESHOLD = 10 * 1024 * 1024; // 10MB
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB
+const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 
 let username = '';
 let currentRoom = 'general';
@@ -184,26 +193,119 @@ function init() {
   });
 
   function sendFile(file) {
+    if (file.size > MAX_FILE_SIZE) {
+      setUploadStatus('File is too large. Max size is 2GB.');
+      return;
+    }
+
+    if (file.size > CHUNK_UPLOAD_THRESHOLD) {
+      return uploadFileInChunks(file);
+    }
+
+    return uploadWholeFile(file);
+  }
+
+  function uploadWholeFile(file) {
+    setUploadStatus('Uploading file...');
+    attachBtn.disabled = true;
+    fileInput.disabled = true;
+
     const formData = new FormData();
     formData.append('file', file);
 
-    fetch('/upload', {
+    return fetch('/upload', {
       method: 'POST',
       body: formData
     })
       .then((response) => response.json())
       .then((data) => {
-        if (!data.fileUrl) return;
+        if (!data.fileUrl) {
+          throw new Error('Upload returned no file URL');
+        }
 
         socket.emit('send-file', {
           fileName: data.fileName,
           fileType: data.fileType || file.type,
           fileUrl: data.fileUrl
         });
+
+        setUploadStatus(`Uploaded ${file.name}`);
       })
       .catch((error) => {
         console.error('Upload failed:', error);
+        setUploadStatus('Upload failed.');
+      })
+      .finally(() => {
+        attachBtn.disabled = false;
+        fileInput.disabled = false;
       });
+  }
+
+  async function uploadFileInChunks(file) {
+    const fileId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+    setUploadStatus(`Uploading ${file.name} in ${totalChunks} chunks...`);
+    attachBtn.disabled = true;
+    fileInput.disabled = true;
+
+    try {
+      let result;
+
+      for (let index = 0; index < totalChunks; index++) {
+        const start = index * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+        const formData = new FormData();
+
+        formData.append('chunk', chunk, file.name);
+        formData.append('fileId', fileId);
+        formData.append('fileName', file.name);
+        formData.append('fileType', file.type);
+        formData.append('totalChunks', totalChunks);
+        formData.append('chunkIndex', index);
+
+        const response = await fetch('/upload-chunk', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error(`Chunk ${index + 1} upload failed`);
+        }
+
+        result = await response.json();
+        const progress = Math.round(((index + 1) / totalChunks) * 100);
+        setUploadStatus(`Uploading ${file.name}: ${progress}% (${index + 1}/${totalChunks})`, progress / 100);
+      }
+
+      if (!result?.fileUrl) {
+        throw new Error('Chunked upload did not return a final file URL');
+      }
+
+      socket.emit('send-file', {
+        fileName: result.fileName || file.name,
+        fileType: result.fileType || file.type,
+        fileUrl: result.fileUrl
+      });
+
+      setUploadStatus(`Uploaded ${file.name}`);
+    } catch (error) {
+      console.error('Chunk upload failed:', error);
+      setUploadStatus('Chunk upload failed.');
+    } finally {
+      attachBtn.disabled = false;
+      fileInput.disabled = false;
+    }
+  }
+
+  function setUploadStatus(message, progress = 0) {
+    uploadStatus.textContent = message;
+    if (progress > 0 && progress <= 1) {
+      uploadStatus.style.color = '#333';
+    } else {
+      uploadStatus.style.color = '#555';
+    }
   }
 
   function addSystemMessage(message) {

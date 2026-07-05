@@ -35,6 +35,14 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 * 1024 } // 10GB limit
 });
 
+const chunkUploadsDir = path.join(__dirname, 'public', 'uploads', 'chunks');
+fs.mkdirSync(chunkUploadsDir, { recursive: true });
+
+const chunkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 6 * 1024 * 1024 } // 6MB per chunk
+});
+
 function getUsersInRoom(roomName) {
   return Object.values(users)
     .filter((user) => user.room === roomName)
@@ -155,6 +163,70 @@ app.post('/upload', upload.single('file'), (req, res) => {
     fileName: req.file.originalname,
     fileUrl: `/uploads/${req.file.filename}`,
     fileType: req.file.mimetype
+  });
+});
+
+app.post('/upload-chunk', chunkUpload.single('chunk'), async (req, res) => {
+  const { fileId, fileName, fileType, totalChunks, chunkIndex } = req.body;
+
+  if (!req.file || !fileId || !fileName || totalChunks == null || chunkIndex == null) {
+    return res.status(400).json({ error: 'Missing chunk upload metadata' });
+  }
+
+  const safeFileId = sanitizeFileName(String(fileId)).slice(0, 50);
+  const safeName = sanitizeFileName(String(fileName)).slice(0, 80);
+  const total = Number(totalChunks);
+  const index = Number(chunkIndex);
+
+  if (Number.isNaN(total) || Number.isNaN(index) || total <= 0 || index < 0 || index >= total) {
+    return res.status(400).json({ error: 'Invalid chunk metadata' });
+  }
+
+  const chunkDir = path.join(chunkUploadsDir, safeFileId);
+  fs.mkdirSync(chunkDir, { recursive: true });
+  const chunkPath = path.join(chunkDir, `${index}.part`);
+
+  try {
+    await fs.promises.writeFile(chunkPath, req.file.buffer);
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to save chunk' });
+  }
+
+  const chunkFiles = await fs.promises.readdir(chunkDir);
+  if (chunkFiles.length < total) {
+    return res.json({ fileUrl: null });
+  }
+
+  const finalFilename = `${Date.now()}-${safeName}`;
+  const finalPath = path.join(uploadsDir, finalFilename);
+  const writeStream = fs.createWriteStream(finalPath);
+
+  try {
+    for (let i = 0; i < total; i++) {
+      const partPath = path.join(chunkDir, `${i}.part`);
+      if (!fs.existsSync(partPath)) {
+        writeStream.close();
+        return res.status(400).json({ error: 'Missing chunk part' });
+      }
+      const chunkBuffer = await fs.promises.readFile(partPath);
+      writeStream.write(chunkBuffer);
+    }
+    writeStream.end();
+    await new Promise((resolve, reject) => {
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    await Promise.all(chunkFiles.map((file) => fs.promises.unlink(path.join(chunkDir, file))));
+    await fs.promises.rmdir(chunkDir);
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to assemble chunks' });
+  }
+
+  res.json({
+    fileName: safeName,
+    fileType: fileType || 'application/octet-stream',
+    fileUrl: `/uploads/${finalFilename}`
   });
 });
 

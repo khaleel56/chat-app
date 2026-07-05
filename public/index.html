@@ -269,6 +269,14 @@
       color: #f44336;
     }
 
+    .upload-status {
+      text-align: center;
+      color: #555;
+      font-size: 13px;
+      margin: 8px 0 12px;
+      min-height: 18px;
+    }
+
     @media (max-width: 768px) {
       .container {
         flex-direction: column;
@@ -305,6 +313,7 @@
       <div class="messages-container" id="messagesContainer"></div>
 
       <div class="typing-indicator" id="typingIndicator" style="display: none;"></div>
+      <div class="upload-status" id="uploadStatus"></div>
 
       <div class="input-area">
         <input

@@ -230,6 +230,28 @@ app.post('/upload-chunk', chunkUpload.single('chunk'), async (req, res) => {
   });
 });
 
+// Return which chunk parts have already been uploaded for a given fileId
+app.get('/upload-status', async (req, res) => {
+  const { fileId } = req.query || {};
+  if (!fileId) return res.status(400).json({ error: 'Missing fileId' });
+
+  const safeFileId = sanitizeFileName(String(fileId)).slice(0, 50);
+  const chunkDir = path.join(chunkUploadsDir, safeFileId);
+
+  try {
+    if (!fs.existsSync(chunkDir)) return res.json({ uploaded: [] });
+    const files = await fs.promises.readdir(chunkDir);
+    const uploaded = files
+      .filter((f) => f.endsWith('.part'))
+      .map((f) => Number.parseInt(f.replace('.part', ''), 10))
+      .filter((n) => !Number.isNaN(n))
+      .sort((a, b) => a - b);
+    return res.json({ uploaded });
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to read upload status' });
+  }
+});
+
 // Start server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

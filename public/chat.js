@@ -33,10 +33,13 @@ const featureFlags = {
 const CHUNK_UPLOAD_THRESHOLD = 10 * 1024 * 1024; // 10MB
 const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB
 const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
+const CHUNK_RETRY_LIMIT = 3;
 
 let username = '';
 let currentRoom = 'general';
 let typingTimeout;
+let failedUpload = null; // Store failed upload for retry
+let uploadAbort = null; // AbortController for canceling upload
 
 function init() {
   const socket = io(window.location.origin);
@@ -241,70 +244,156 @@ function init() {
       });
   }
 
-  async function uploadFileInChunks(file) {
-    const fileId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  async function uploadFileInChunks(file, isRetry = false) {
+    const fileId = isRetry ? failedUpload.fileId : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
     setUploadStatus(`Uploading ${file.name} in ${totalChunks} chunks...`);
     attachBtn.disabled = true;
     fileInput.disabled = true;
+    failedUpload = null; // Clear failed upload on new attempt
+
+    // Create new AbortController for this upload
+    uploadAbort = new AbortController();
 
     try {
-      let result;
+      // Only query server for already uploaded chunks on retry (resume support)
+      let uploadedSet = new Set();
+      if (isRetry) {
+        try {
+          const statusResp = await fetch(`/upload-status?fileId=${encodeURIComponent(fileId)}`, {
+            signal: uploadAbort.signal
+          });
+          if (statusResp.ok) {
+            const statusJson = await statusResp.json();
+            if (Array.isArray(statusJson.uploaded)) uploadedSet = new Set(statusJson.uploaded);
+          }
+        } catch (e) {
+          // ignore status query errors and proceed from scratch
+        }
+      }
+
+      let finalResult = null;
 
       for (let index = 0; index < totalChunks; index++) {
+        if (uploadedSet.has(index)) {
+          const progress = Math.round(((index + 1) / totalChunks) * 100);
+          setUploadStatus(`Uploading ${file.name}: ${progress}% (${index + 1}/${totalChunks})`, progress / 100);
+          continue;
+        }
+
         const start = index * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
-        const formData = new FormData();
 
-        formData.append('chunk', chunk, file.name);
-        formData.append('fileId', fileId);
-        formData.append('fileName', file.name);
-        formData.append('fileType', file.type);
-        formData.append('totalChunks', totalChunks);
-        formData.append('chunkIndex', index);
+        let attemptError = null;
+        let success = false;
+        for (let attempt = 1; attempt <= CHUNK_RETRY_LIMIT; attempt++) {
+          const formData = new FormData();
+          formData.append('chunk', chunk, file.name);
+          formData.append('fileId', fileId);
+          formData.append('fileName', file.name);
+          formData.append('fileType', file.type);
+          formData.append('totalChunks', totalChunks);
+          formData.append('chunkIndex', index);
 
-        const response = await fetch('/upload-chunk', {
-          method: 'POST',
-          body: formData
-        });
-
-        if (!response.ok) {
-          throw new Error(`Chunk ${index + 1} upload failed`);
+          try {
+            const response = await fetch('/upload-chunk', { 
+              method: 'POST', 
+              body: formData,
+              signal: uploadAbort.signal
+            });
+            if (!response.ok) throw new Error(`Chunk ${index + 1} upload failed with status ${response.status}`);
+            finalResult = await response.json();
+            success = true;
+            break;
+          } catch (err) {
+            attemptError = err;
+            setUploadStatus(`Chunk ${index + 1} failed (attempt ${attempt}/${CHUNK_RETRY_LIMIT})`);
+            // brief backoff
+            await new Promise((r) => setTimeout(r, 300 * attempt));
+          }
         }
 
-        result = await response.json();
+        if (!success) {
+          throw attemptError || new Error(`Chunk ${index + 1} upload failed`);
+        }
+
         const progress = Math.round(((index + 1) / totalChunks) * 100);
         setUploadStatus(`Uploading ${file.name}: ${progress}% (${index + 1}/${totalChunks})`, progress / 100);
       }
 
-      if (!result?.fileUrl) {
+      if (!finalResult?.fileUrl) {
         throw new Error('Chunked upload did not return a final file URL');
       }
 
       socket.emit('send-file', {
-        fileName: result.fileName || file.name,
-        fileType: result.fileType || file.type,
-        fileUrl: result.fileUrl
+        fileName: finalResult.fileName || file.name,
+        fileType: finalResult.fileType || file.type,
+        fileUrl: finalResult.fileUrl
       });
 
+      uploadAbort = null; // Clear abort before final status
       setUploadStatus(`Uploaded ${file.name}`);
     } catch (error) {
       console.error('Chunk upload failed:', error);
-      setUploadStatus('Chunk upload failed.');
+      // Don't store as failed if user canceled
+      if (error.name !== 'AbortError') {
+        failedUpload = { file, fileId, totalChunks };
+        uploadAbort = null; // Clear abort before error status
+        setUploadStatus(`Chunk upload failed. ${error?.message || ''}`.trim(), 'error');
+      } else {
+        uploadAbort = null; // Clear abort before cancel status
+        setUploadStatus('Upload canceled');
+      }
     } finally {
+      uploadAbort = null;
       attachBtn.disabled = false;
       fileInput.disabled = false;
     }
   }
 
-  function setUploadStatus(message, progress = 0) {
+  function setUploadStatus(message, statusOrProgress = 0) {
+    uploadStatus.innerHTML = '';
     uploadStatus.textContent = message;
-    if (progress > 0 && progress <= 1) {
+    
+    if (statusOrProgress === 'error' && failedUpload) {
+      uploadStatus.style.color = '#d32f2f';
+      const retryBtn = document.createElement('button');
+      retryBtn.textContent = ' Retry Upload';
+      retryBtn.style.marginLeft = '10px';
+      retryBtn.style.padding = '5px 10px';
+      retryBtn.style.cursor = 'pointer';
+      retryBtn.style.backgroundColor = '#d32f2f';
+      retryBtn.style.color = 'white';
+      retryBtn.style.border = 'none';
+      retryBtn.style.borderRadius = '3px';
+      retryBtn.onclick = () => {
+        uploadFileInChunks(failedUpload.file, true); // Retry with isRetry=true
+      };
+      uploadStatus.appendChild(retryBtn);
+    } else if (uploadAbort && typeof statusOrProgress === 'number') {
+      // Show Cancel button during upload
       uploadStatus.style.color = '#333';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.textContent = ' Cancel';
+      cancelBtn.style.marginLeft = '10px';
+      cancelBtn.style.padding = '5px 10px';
+      cancelBtn.style.cursor = 'pointer';
+      cancelBtn.style.backgroundColor = '#ff9800';
+      cancelBtn.style.color = 'white';
+      cancelBtn.style.border = 'none';
+      cancelBtn.style.borderRadius = '3px';
+      cancelBtn.onclick = () => {
+        if (uploadAbort) {
+          uploadAbort.abort();
+          setUploadStatus('Upload canceled');
+        }
+      };
+      uploadStatus.appendChild(cancelBtn);
     } else {
-      uploadStatus.style.color = '#555';
+      const progress = typeof statusOrProgress === 'number' ? statusOrProgress : 0;
+      uploadStatus.style.color = progress > 0 && progress <= 1 ? '#333' : '#555';
     }
   }
 
